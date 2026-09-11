@@ -1,0 +1,133 @@
+<BrowserToolbar>:
+    size_hint: 1, None
+    height: tab_header.height
+
+    CBoxLayout:
+        adaptive: [False, True]
+        spacing: dp(8)
+
+        CTabHeader:
+            id: tab_header
+            adaptive: [True, True]
+            padding: dp(2)
+            pos_hint: {"center_y": 0.5}
+
+            # Tabs are generated dynamically in python
+
+        ActiveButton:
+            id: add_tab_btn
+            icon: "add--large"
+            font_size: plex_16
+
+    # CBoxLayout:
+    #     adaptive: [False, True]
+    #     padding: dp(4)
+
+    # #     ActiveButton:
+    # #         icon: "chevron--left"
+    # #         role: "Medium"
+    # #         disabled: not root.view_model.active_tab.can_go_back if root.view_model and root.view_model.active_tab else True
+    # #         on_press: root.view_model.active_tab.go_back() if root.view_model and root.view_model.active_tab else None
+
+    # #     ActiveButton:
+    # #         icon: "chevron--right"
+    # #         role: "Medium"
+    # #         disabled: not root.view_model.active_tab.can_go_forward if root.view_model and root.view_model.active_tab else True
+    # #         on_press: root.view_model.active_tab.go_forward() if root.view_model and root.view_model.active_tab else None
+
+    # #     ActiveButton:
+    # #         icon: "close" if root.view_model and root.view_model.active_tab and root.view_model.active_tab.is_loading else "renew"
+    # #         on_press: (root.view_model.active_tab.stop() if root.view_model.active_tab.is_loading else root.view_model.active_tab.reload()) if root.view_model and root.view_model.active_tab else None
+    # #         role: "Medium"
+
+    #     CTextInputLayoutCircular:
+    #         size_hint_x: 1
+    #         pos_hint: {"center_y":0.5}
+            
+    #         CTextInput:
+    #             id: url_input
+    #             text: root.view_model.active_tab.url if root.view_model and root.view_model.active_tab else ""
+    #             on_text_validate: root.view_model.active_tab.load(self.text) if root.view_model and root.view_model.active_tab else None
+    #             multiline: False
+    #             size_hint_y: None
+    #             -height: dp(32)
+    #             padding: [dp(16), dp(4), dp(48), dp(4)]
+                
+    #         CTextInputTrailingIconButton:
+    #             icon: "search"
+    #             role: "Small"
+    #             on_press: root.view_model.active_tab.load(url_input.text) if root.view_model and root.view_model.active_tab else None
+
+    CBoxLayout:
+        id: btn_group
+        adaptive: [True, False]
+        size_hint_y: 1
+        pos_hint: {"top": 1.0, "right": 1.0}
+
+        ActiveButton:
+            icon: "subtract--large"
+            size_hint_y: 1
+            -radius: 0
+            icon_font_size: plex_16
+            on_press: app.minimize_window()
+
+        ActiveButton:
+            id: btn_max
+            icon: "maximize"
+            size_hint_y: 1
+            -radius: 0
+            icon_font_size: plex_16
+            on_press: app.toggle_maximize()
+
+        CButtonDanger:
+            icon: "close--large"
+            variant: "Ghost"
+            size_hint_y: 1
+            -radius: 0
+            icon_font_size: plex_16
+            on_press: app.close_window()
+
+<TabHeaderItem>:
+    font_size: plex_14
+
+    canvas.after:
+        Color:
+            rgba: app.border_interactive if self.selected else app.transparent
+        Line:
+            width: dp(1)
+            cap: "square"
+            joint: "none"
+            points: [self.x + dp(1), self.y, self.right - dp(1), self.y]
+    adaptive: [True, True]
+    line_color_focus: app.focus
+    bg_color_focus: app.layer_hover_01
+    hover_color: app.layer_hover_01
+    active_color: app.layer_selected_01
+    spacing: dp(4)
+    padding: [dp(8), dp(4)]
+
+    CIconCircular:
+        icon: root.icon
+        bg_source: root.source
+        size_hint: None, None
+        font_size: dp(24)
+        radius: self.height/5
+        pos_hint: {"center_y": 0.5}
+
+    CLabelNeutral:
+        text: root.title
+        font_size: plex_12
+        pos_hint: {"center_y": 0.5}
+
+    ActiveButton:
+        id: btn_close
+        icon: "close"
+        role: "Small"
+        font_size: plex_14
+        pos_hint: {"center_y": 0.5}
+        text_color: app.text_secondary
+        text_color_active: app.text_primary
+        hover_color: app.layer_hover_01
+        text_color_focus: app.text_primary
+        text_color_hover: app.text_primary
+        on_press: root.close_tab()

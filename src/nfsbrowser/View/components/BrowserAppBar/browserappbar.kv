@@ -1,0 +1,79 @@
+<BrowserAppBar>:
+    padding: [dp(8), dp(4)]
+    spacing: dp(2)
+    orientation: "horizontal"
+    adaptive: [False, True]
+
+    ActiveButton:
+        id: btn_back
+        icon: "chevron--left"
+        role: "Small"
+        font_size: plex_14
+        pos_hint: {"center_y":0.5}
+
+    ActiveButton:
+        id: btn_fwd
+        icon: "chevron--right"
+        role: "Small"
+        font_size: plex_14
+        pos_hint: {"center_y":0.5}
+
+    ActiveButton:
+        id: btn_reload
+        icon: "renew"
+        role: "Small"
+        pos_hint: {"center_y":0.5}
+        font_size: plex_14
+
+    ActiveButton:
+        id: btn_home
+        icon: "home"
+        role: "Small"
+        font_size: plex_14
+        pos_hint: {"center_y":0.5}
+
+    CTextInputLayoutCircular:
+        id: searchinput
+        radius: self.height/2
+        size_hint: 1, None
+        bg_color_focus: app.layer_hover_01
+        line_color_focus: app.transparent
+
+        ActiveButton:
+            id: engine_icon
+            icon: "blank"
+            icon_source: app.se_source
+            font_size: plex_24
+            pos_hint: {"center_y": 0.5}
+            pos: dp(4), self.pos[1]
+            on_press:
+                root.se_dropdown.visibility = self.focus
+
+        FixedTextInput:
+            id: search_input
+            -baseline_color: app.transparent
+            size_hint_x: None
+            width: root.width - engine_icon.width - dp(128)
+            pos: engine_icon.width + dp(4), self.pos[1]
+            pos_hint: {"center_y": 0.5}
+            -height: dp(40)
+            multiline: False
+            padding: [dp(4), dp(10), dp(128), dp(10)]
+            hint_text: f"Search {app.current_se.capitalize()} or type a Url"
+            font_size: sp(14)
+            input_type: "url"
+            text: ""
+            on_text_validate:
+                app.search(self.text)
+
+    ActiveButton:
+        icon: "settings"
+        role: "Small"
+        pos_hint: {"center_y":0.5}
+        font_size: plex_14
+
+    ActiveButton:
+        icon: "menu"
+        role: "Small"
+        pos_hint: {"center_y":0.5}
+        font_size: plex_14

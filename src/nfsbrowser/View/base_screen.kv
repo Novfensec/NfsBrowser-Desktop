@@ -1,0 +1,121 @@
+#: import FT kivy.uix.screenmanager.FadeTransition
+
+<MainScreen>:
+
+    GradientLayout:
+        id: gradient
+        gradient_color_top: app.background
+        gradient_color_bottom: app.gray_30
+        gradient_linear_bounds: [0.0, 1.0]
+        gradient_animated: True
+        gradient_speed: 1
+        gradient_wave_height: 0.2
+        gradient_wave_count: 1
+        gradient_type: "radial"
+        canvas.before:
+            Color:
+                rgba: 1, 1, 1, 1
+            SmoothRoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: root.radius
+        size_hint: 1, 1
+
+    CBoxLayout:
+        id: main_layout
+        orientation: "vertical"
+        size_hint: [1, 1]
+
+        BrowserToolbar:
+            id: toolbar
+            
+        BrowserAppBar:
+            id: app_bar
+
+
+<ActiveButton>:
+    radius: self.height/2
+    text_color: app.text_secondary
+    text_color_hover: app.text_primary
+    text_color_active: app.text_primary
+    active_color: app.background_hover
+    hover_color: app.background_hover
+    text_color_focus: app.text_primary
+
+
+<ActiveButtonDark@ActiveButton>:
+    bg_color: app.gray_100
+    hover_color: app.gray_80
+    active_color: app.gray_100
+    -text_color: app.text_on_color
+    -text_color_focus: [1, 1, 1, 1]
+
+
+<ActiveButtonSuccess@ActiveButton>:
+    bg_color: app.support_success
+    active_color: app.support_success_inverse
+    -text_color: app.text_inverse
+    -text_color_focus: app.text_inverse
+
+
+<ActiveButtonError@ActiveButton>:
+    -text_color_hover: app.text_on_color
+    -bg_color: app.support_error
+    -active_color: app.support_error_inverse
+    -hover_color: app.support_error_inverse
+    -text_color: app.text_inverse
+    -text_color_focus: app.text_inverse
+
+
+<ActiveButtonInfo@ActiveButton>:
+    bg_color: app.button_primary
+    
+    active_color: app.button_primary_active
+    -text_color: app.text_on_color
+    -text_color_focus: app.text_on_color
+
+
+
+<CScreenManager>:
+    transition: FT(duration=0.15, clearcolor=app.background)
+
+
+<LoadingLayout>:
+
+    size_hint: 1, 1
+
+    CLoadingIndicator:
+        role: "Small"
+
+
+<BanLayout>:
+    bg_color: app.background
+
+    CBoxLayout:
+        orientation: "vertical"
+        adaptive: [False, True]
+        size_hint_x: 1
+        spacing: dp(32)
+
+        CIcon:
+            icon: "error--filled"
+            font_size: sp(128)
+            color: app.support_error
+            pos_hint: {"center_x": 0.5}
+
+        CLabel:
+            text: f"An Unknown error occurred!\nPlease try after some time."
+            style: "heading_03"
+            halign: "center"
+
+        CLink:
+            pos_hint: {"center_x": 0.5}
+            role: "Large"
+            on_press:
+                app.ban_state(False)
+
+            CLinkText:
+                text: "Refresh"
+
+            CLinkIcon:
+                icon: "restart"

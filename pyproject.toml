@@ -1,0 +1,67 @@
+[project]
+name = "nfsbrowser"
+version = "0.1.0"
+description = "NfsBrowser is a browser application."
+readme = "README.md"
+authors = [
+    { name = "Kartavya Shukla", email = "novfensec@protonmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "carbonkivy",
+    "pybindcef",
+]
+
+[project.scripts]
+nfsbrowser = "nfsbrowser:main"
+
+[build-system]
+requires = ["uv_build>=0.11.14,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+carbonkivy = { git = "https://github.com/CarbonKivy/CarbonKivy", rev = "master" }
+pybindcef = { git = "https://github.com/Novfensec/pybindcef", rev="main" }
+ksproject = { git = "https://github.com/kivy-school/ksproject", rev = "windows-support" }
+
+[dependency-groups]
+dev = [
+    "ksproject",
+]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+find-links = ["./wheelhouse"]
+
+[tool.uv.pip]
+extra-index-url = [
+    "https://pypi-index.psychowaspx.workers.dev/simple",
+    "https://pypi.anaconda.org/kivyschool/simple"
+]
+find-links = ["./wheelhouse"]
+
+#### kivy-school configuration ####
+
+[tool.kivy-school]
+app_name = "NfsBrowser"
+bootstrap = "kivy"
+
+
+[tool.kivy-school.macos]
+bundle_id = "com.novfensec.nfsbrowser"
+minimum_deployment = "11.5"
+info_plist = {}
+entitlements = {}
+#developer_team = "ABC123XYZ" # Set to your Apple Developer Team ID (e.g. ABC123XYZ) to enable automatic code signing; leave as null for manual signing
+# pre_build = "path/to/android_prebuild.py"
+# post_build = "path/to/android_postbuild.py"
+
+[tool.kivy-school.windows]
+icon = "src/nfsbrowser/data/NfsBrowserDesktop64.png"
+python_version = "3.13.5"
+byte_compile_python = true
+# include_tkinter = false
+# require_admin = true
+# pre_build = "path/to/window_prebuild.py"
+# post_build = "path/to/windows_postbuild.py"
+

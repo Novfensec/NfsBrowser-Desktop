@@ -1,0 +1,133 @@
+<DevSupportScreenView>:
+
+    CStackLayout:
+        size_hint: 1, 1
+        spacing: dp(16)
+        padding: dp(16)
+
+        ActiveButton:
+            icon: "arrow--left"
+            on_press:
+                app.manager_screens.current = "entrypoint screen"
+
+        ElasticScrollView:
+            do_scroll_x: False
+
+            CGridLayout:
+                spacing: dp(16)
+                adaptive: [False, True]
+                padding: [0, 0, 0, dp(256)]
+                cols: 1
+                responsive: True
+                min_cols: 1
+                max_cols: 4
+                scale_width: dp(288)
+
+                RoundedBoxLayout:
+                    adaptive: [False, True]
+                    spacing: dp(20)
+                    bg_color: app.layer_01
+                    orientation: "vertical"
+                    padding: [dp(16)]
+                    radius: dp(16)
+
+                    AsyncImage:
+                        source: "data/githubsponsors.png"
+                        fit_mode: "cover"
+                        size_hint: 1, None
+                        height: self.width*9/16
+
+                    CDivider:
+
+                    CLabel:
+                        text: "Support the development through Github Sponsors."
+
+                    ActiveButtonInfo:
+                        text: "Continue"
+                        icon: "chevron--right"
+                        pos_hint: {"right": 1.0}
+                        on_press:
+                            app.web_open("https://github.com/sponsors/Novfensec")
+
+                RoundedBoxLayout:
+                    adaptive: [False, True]
+                    spacing: dp(48)
+                    bg_color: app.layer_01
+                    orientation: "vertical"
+                    padding: [dp(16), dp(16), dp(16), dp(48)]
+                    radius: dp(16)
+
+                    AsyncImage:
+                        source: "data/ethereum.png"
+                        fit_mode: "cover"
+                        size_hint: 1, None
+                        height: self.width*9/16
+
+                    CDivider:
+
+                    CLabel:
+                        text: "Support via Crypto."
+
+                    CTextInputLayoutCircular:
+                        bg_color: app.layer_02
+                        CTextInput:
+                            text: "0x841f179e0D91dc91059525f18D218cdeB0DB5E07"
+                            readonly: True
+                        CTextInputTrailingIconButton:
+                            icon: "copy"
+                        CTextInputLabel:
+                            text: "Ethereum wallet address"
+                        CTextInputHelperText:
+                            text: "Only send Ethereum (ETH) assets to this address. Other assets will be lost forever."
+
+                RoundedBoxLayout:
+                    adaptive: [False, True]
+                    spacing: dp(20)
+                    bg_color: app.layer_01
+                    orientation: "vertical"
+                    padding: [dp(16)]
+                    radius: dp(16)
+
+                    AsyncImage:
+                        source: "data/paypal.png"
+                        fit_mode: "cover"
+                        size_hint: 1, None
+                        height: self.width*9/16
+
+                    CDivider:
+
+                    CLabel:
+                        text: "Support the development through Paypal."
+
+                    ActiveButtonInfo:
+                        text: "Continue"
+                        icon: "chevron--right"
+                        pos_hint: {"right": 1.0}
+                        on_press:
+                            app.web_open("https://paypal.me/KARTAVYASHUKLA")
+
+                RoundedBoxLayout:
+                    adaptive: [False, True]
+                    spacing: dp(20)
+                    bg_color: app.layer_01
+                    orientation: "vertical"
+                    padding: [dp(16)]
+                    radius: dp(16)
+
+                    AsyncImage:
+                        source: "data/wise.png"
+                        fit_mode: "cover"
+                        size_hint: 1, None
+                        height: self.width*9/16
+
+                    CDivider:
+
+                    CLabel:
+                        text: "Support the development through WISE."
+
+                    ActiveButtonInfo:
+                        text: "Continue"
+                        icon: "chevron--right"
+                        pos_hint: {"right": 1.0}
+                        on_press:
+                            app.web_open("https://wise.com/pay/business/kartavyashukla")
