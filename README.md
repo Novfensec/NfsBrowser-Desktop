@@ -2,6 +2,14 @@
 
 NfsBrowser is a modern web browser built with Python, integrating [Kivy](https://kivy.org), [CarbonKivy](https://carbonkivy.readthedocs.io/en/latest), and the [Chromium Embedded Framework (CEF)](https://github.com/chromiumembedded/cef) via [pybindcef](https://github.com/Novfensec/pybindcef).
 
+<details>
+   <summary>Showcase</summary>
+
+![NfsBrowser](assets/nfsbrowser1.png)
+![NfsBrowser](assets/nfsbrowser3.png)
+![NfsBrowser](assets/nfsbrowser2.png)
+</details>
+
 ## Financial Support
 
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/Novfensec?style=for-the-badge&label=Sponsor%20Novfensec&logo=github&color=000000)](https://github.com/sponsors/Novfensec)
