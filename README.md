@@ -10,6 +10,8 @@ NfsBrowser is a modern web browser built with Python, integrating [Kivy](https:/
 ![NfsBrowser](assets/nfsbrowser2.png)
 </details>
 
+<!-- GitAds-Verify: 1VZMWNQITUMWATHMLZ36TW6UX55SWP3Q -->
+
 ## Financial Support
 
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/Novfensec?style=for-the-badge&label=Sponsor%20Novfensec&logo=github&color=000000)](https://github.com/sponsors/Novfensec)
