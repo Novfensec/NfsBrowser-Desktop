@@ -5,7 +5,7 @@ from root import ROOT
 
 
 class ConfigHandler:
-    def __init__(self, filepath="config.json"):
+    def __init__(self, filepath=os.path.join(os.path.expanduser("~"), "nfsbrowser", "config.json")):
         """Initializes the handler with a file path."""
         self.filepath = filepath
         self._ensure_file_exists()
@@ -52,4 +52,4 @@ class ConfigHandler:
         self.save(config)
 
 
-config_handler = ConfigHandler(os.path.join(ROOT, "data", "config.json"))
+config_handler = ConfigHandler()
