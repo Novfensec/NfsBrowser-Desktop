@@ -44,17 +44,23 @@ Usage
 import os
 
 import pybindcef
-from kivy.uix.widget import Widget
-from kivy.properties import ObjectProperty, StringProperty
-from kivy.graphics import Rectangle, Color, PushMatrix, PopMatrix, Scale, Translate
-from kivy.graphics.texture import Texture
+from kivy import platform
 from kivy.clock import Clock
 from kivy.core.window import Window
-from kivy import platform
+from kivy.graphics import Color, PopMatrix, PushMatrix, Rectangle, Scale, Translate
+from kivy.graphics.texture import Texture
+from kivy.properties import (
+    BooleanProperty,
+    ListProperty,
+    NumericProperty,
+    ObjectProperty,
+    StringProperty,
+)
+from kivy.uix.widget import Widget
 
-# --------------------------------------------------------------------------
+# --------
 # CEF modifier flag bitmask constants
-# --------------------------------------------------------------------------
+# --------
 CEF_SHIFT = 1 << 1
 CEF_CTRL = 1 << 2
 CEF_ALT = 1 << 3
@@ -62,9 +68,17 @@ CEF_META = 1 << 7
 CEF_CAPSLOCK = 1 << 0
 CEF_NUMLOCK = 1 << 8
 
-# --------------------------------------------------------------------------
+# Mouse-button held flags (cef_event_flags_t) — used in move events so CEF
+# knows a button is pressed and can treat the motion as a drag.
+CEF_MB_LEFT = 1 << 4  # EVENTFLAG_LEFT_MOUSE_BUTTON
+CEF_MB_MIDDLE = 1 << 5  # EVENTFLAG_MIDDLE_MOUSE_BUTTON
+CEF_MB_RIGHT = 1 << 6  # EVENTFLAG_RIGHT_MOUSE_BUTTON
+
+_BUTTON_TO_MB_FLAG = {0: CEF_MB_LEFT, 1: CEF_MB_MIDDLE, 2: CEF_MB_RIGHT}
+
+# --------
 # Kivy keycode -> Windows Virtual-Key code map
-# --------------------------------------------------------------------------
+# --------
 KIVY_TO_VK = {
     # Special/control keys
     8: 8,  # Backspace
@@ -109,6 +123,215 @@ KIVY_TO_VK = {
 }
 
 NEEDS_CHAR = {8: 8, 13: 13, 9: 9, 27: 27}
+
+
+# AdBlocker — thin wrapper around the `adblock` package (adblock-rust Python
+# bindings, the same engine used by Brave / uBlock Origin).
+#
+# Install once:  pip install adblock
+#
+# Filter lists (URLs) can be customised via AdBlocker(filter_urls=[...]).
+# The compiled filter set is cached to disk so subsequent starts are instant.
+
+
+_DEFAULT_FILTER_LISTS = [
+    # EasyList — primary English ad-blocking list
+    "https://easylist.to/easylist/easylist.txt",
+    # EasyPrivacy — tracker blocking
+    "https://easylist.to/easylist/easyprivacy.txt",
+    # uBlock Origin main filters — covers YouTube ad domains & players
+    "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters.txt",
+    # uBlock Origin privacy filters
+    "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/privacy.txt",
+    # uBlock Origin annoyances (cookie banners, overlays)
+    "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/annoyances-cookies.txt",
+    # AdGuard Base — additional YouTube ad coverage
+    "https://raw.githubusercontent.com/AdguardTeam/FiltersRegistry/master/filters/filter_2_Base/filter.txt",
+]
+
+# CEF resource_type values that are meaningful to block
+_BLOCKABLE_TYPES = {
+    1,  # sub_frame  — iframe ads (YouTube ad iframes, etc.)
+    3,  # script
+    4,  # image
+    5,  # font
+    6,  # sub_resource
+    7,  # object
+    8,  # media
+    13,  # xhr
+    14,  # ping
+}
+
+
+class AdBlocker:
+    """
+    Ad / tracker blocker backed by the `adblock` package.
+
+    Parameters
+    ----------
+    filter_urls : list[str] | None
+        URLs of Adblock-Plus-format filter lists to fetch.
+        Defaults to EasyList + EasyPrivacy + uBlock Origin + AdGuard Base.
+    cache_path : str | None
+        Path to store the compiled filter set (.bin).
+        Defaults to ``~/.cache/pybindcef_adblock_v<version>.bin``.
+        A new version number is used whenever the default filter list changes,
+        so old caches are automatically skipped and rebuilt.
+    """
+
+    # Bump this when _DEFAULT_FILTER_LISTS changes to force a cache rebuild.
+    _CACHE_VERSION = 2
+
+    def __init__(self, filter_urls=None, cache_path=None):
+        self._engine = None
+        self._filter_urls = filter_urls or _DEFAULT_FILTER_LISTS
+        self._cache_path = cache_path or os.path.join(
+            os.path.expanduser("~"),
+            ".cache",
+            f"pybindcef_adblock_v{self._CACHE_VERSION}.bin",
+        )
+
+    #
+    # Public API
+    #
+
+    def load(self):
+        """
+        Load (or build) the filter engine. Call this once at startup,
+        ideally in a thread so it does not block the UI.
+        """
+        try:
+            import adblock
+        except ImportError:
+            print(
+                "[AdBlocker] 'adblock' package not found — run: pip install adblock\n"
+                "            Ad blocking will be DISABLED."
+            )
+            return
+
+        if os.path.exists(self._cache_path):
+            try:
+                with open(self._cache_path, "rb") as f:
+                    data = f.read()
+                engine = adblock.Engine(adblock.FilterSet())
+                engine.deserialize(data)
+                self._engine = engine
+                print(f"[AdBlocker] Loaded cached filter set from {self._cache_path}")
+                return
+            except Exception as e:
+                print(f"[AdBlocker] Cache load failed ({e}), rebuilding…")
+
+        self._engine = self._build_engine(adblock)
+
+    def should_block(self, url, source_url="", resource_type=6):
+        """
+        Return True if *url* should be blocked.
+
+        Parameters
+        ----------
+        url : str
+        source_url : str   page URL making the request
+        resource_type : int  CEF cef_resource_type_t value
+        """
+        if self._engine is None:
+            return False
+        if resource_type not in _BLOCKABLE_TYPES:
+            return False
+        try:
+            rtype = _CEF_TYPE_TO_ADBLOCK.get(resource_type, "other")
+            result = self._engine.check_network_urls(url, source_url, rtype)
+            return result.matched
+        except Exception:
+            return False
+
+    #
+    # Internal helpers
+    #
+
+    def _build_engine(self, adblock):
+        import urllib.request
+
+        filter_set = adblock.FilterSet()
+        for list_url in self._filter_urls:
+            try:
+                print(f"[AdBlocker] Fetching {list_url} …")
+                with urllib.request.urlopen(list_url, timeout=15) as resp:
+                    rules = resp.read().decode("utf-8", errors="replace")
+                filter_set.add_filter_list(rules)
+                print(f"[AdBlocker] ✓ {list_url}")
+            except Exception as e:
+                print(f"[AdBlocker] ✗ {list_url}: {e}")
+
+        engine = adblock.Engine(filter_set)
+
+        # Persist the compiled set for fast reloads.
+        try:
+            os.makedirs(os.path.dirname(self._cache_path), exist_ok=True)
+            with open(self._cache_path, "wb") as f:
+                f.write(engine.serialize())
+            print(f"[AdBlocker] Saved filter set to {self._cache_path}")
+        except Exception as e:
+            print(f"[AdBlocker] Could not save cache: {e}")
+
+        return engine
+
+
+# Map CEF resource_type ints → adblock content-type strings
+_CEF_TYPE_TO_ADBLOCK = {
+    1: "subdocument",
+    3: "script",
+    4: "image",
+    5: "font",
+    6: "other",
+    7: "object",
+    8: "media",
+    13: "xmlhttprequest",
+    14: "ping",
+}
+
+
+# JavaScript injected into YouTube pages to skip / remove ads that slip
+# through the network-level filter (served from the same domain as content).
+
+_YT_ADSKIP_JS = """
+(function() {
+    'use strict';
+    function skipAds() {
+        // 1. Click the skip button as soon as it appears.
+        var skip = document.querySelector(
+            '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern'
+        );
+        if (skip) { skip.click(); return; }
+
+        // 2. If an unskippable ad is playing, jump to the end.
+        var video = document.querySelector('video');
+        if (video && document.querySelector('.ad-showing')) {
+            video.currentTime = video.duration;
+            video.playbackRate = 16;
+            return;
+        }
+
+        // 3. Remove overlay / banner ads.
+        [
+            '.ytp-ad-overlay-container',
+            '.ytp-ad-text-overlay',
+            'ytd-banner-promo-renderer',
+            'ytd-statement-banner-renderer',
+            'ytd-ad-slot-renderer',
+            'ytd-in-feed-ad-layout-renderer',
+            'ytd-primetime-promo-renderer',
+            'ytd-promoted-sparkles-web-renderer',
+            '#player-ads',
+            '#masthead-ad',
+        ].forEach(function(sel) {
+            document.querySelectorAll(sel).forEach(function(el) { el.remove(); });
+        });
+    }
+    // Poll every 250 ms — ads can appear at any time.
+    setInterval(skipAds, 250);
+    skipAds();
+})();
+"""
 
 
 def init_cef(worker_exe, resources_dir, base_dir=None):
@@ -163,68 +386,49 @@ class CefWebView(Widget):
         )
     """
 
-    tex = ObjectProperty()
+    tex = ObjectProperty(None, allownone=True)
     start_url = StringProperty("https://google.com")
-    active = True
+    active = BooleanProperty(True)  # set False to hide and mute input for this tab
 
-    def __init__(
-        self,
-        start_url=None,
-        fps=60,
-        initial_zoom=1.0,
-        texture_size=(800, 600),
-        shared_texture_enabled=False,
-        on_load_start=None,
-        on_load_end=None,
-        on_load_error=None,
-        on_address_change=None,
-        on_title_change=None,
-        on_loading_state_change=None,
-        on_favicon_url_change=None,
-        on_console_message=None,
-        on_before_popup=None,
-        on_before_download=None,
-        on_download_updated=None,
-        on_context_menu=None,
-        on_js_alert=None,
-        on_js_confirm=None,
-        on_js_prompt=None,
-        on_find_result=None,
-        on_fullscreen_mode_change=None,
-        **kwargs,
-    ):
+    fps = NumericProperty(120)
+    initial_zoom = NumericProperty(1.5)
+    texture_size = ListProperty([800, 600])
+    shared_texture_enabled = BooleanProperty(False)
+    scroll_step = NumericProperty(120)
+
+    on_load_start = ObjectProperty(None, allownone=True)
+    on_load_end = ObjectProperty(None, allownone=True)
+    on_load_error = ObjectProperty(None, allownone=True)
+    on_address_change = ObjectProperty(None, allownone=True)
+    on_title_change = ObjectProperty(None, allownone=True)
+    on_loading_state_change = ObjectProperty(None, allownone=True)
+    on_favicon_url_change = ObjectProperty(None, allownone=True)
+    on_console_message = ObjectProperty(None, allownone=True)
+    on_before_popup = ObjectProperty(None, allownone=True)
+    on_before_download = ObjectProperty(None, allownone=True)
+    on_download_updated = ObjectProperty(None, allownone=True)
+    on_context_menu = ObjectProperty(None, allownone=True)
+    on_js_alert = ObjectProperty(None, allownone=True)
+    on_js_confirm = ObjectProperty(None, allownone=True)
+    on_js_prompt = ObjectProperty(None, allownone=True)
+    on_find_result = ObjectProperty(None, allownone=True)
+    on_fullscreen_mode_change = ObjectProperty(None, allownone=True)
+
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-        if start_url is not None:
-            self.start_url = start_url
-
-        self._cb_load_start = on_load_start
-        self._cb_load_end = on_load_end
-        self._cb_load_error = on_load_error
-        self._cb_address_change = on_address_change
-        self._cb_title_change = on_title_change
-        self._cb_loading_state_change = on_loading_state_change
-        self._cb_favicon_url_change = on_favicon_url_change
-        self._cb_console_message = on_console_message
-        self._cb_before_popup = on_before_popup
-        self._cb_before_download = on_before_download
-        self._cb_download_updated = on_download_updated
-        self._cb_context_menu = on_context_menu
-        self._cb_js_alert = on_js_alert
-        self._cb_js_confirm = on_js_confirm
-        self._cb_js_prompt = on_js_prompt
-        self._cb_find_result = on_find_result
-        self._cb_fullscreen_mode_change = on_fullscreen_mode_change
-
         self._current_modifiers = 0
+        self._mouse_mods = 0  # bitmask of currently-held mouse buttons
         self.mapped = False
         self.current_handle = 0
-        self.tex = Texture.create(size=texture_size, colorfmt="bgra")
+        self.tex = Texture.create(size=tuple(self.texture_size), colorfmt="bgra")
 
         self._cef_focused = False
         self._keyboard = None
+        self._active_touches = {}
+        self._current_zoom = self.initial_zoom
 
-        w, h = texture_size
+        w, h = self.texture_size
         with self.canvas.after:
             Color(1, 1, 1, 1)
             PushMatrix()
@@ -240,8 +444,8 @@ class CefWebView(Widget):
             url=self.start_url,
             on_cpu_paint=self._on_cpu_paint,
             on_gpu_paint=self._on_gpu_paint,
-            shared_texture_enabled=shared_texture_enabled,
-            fps=fps,
+            shared_texture_enabled=self.shared_texture_enabled,
+            fps=self.fps,
             on_load_start=self._dispatch_load_start,
             on_load_end=self._dispatch_load_end,
             on_load_error=self._dispatch_load_error,
@@ -251,12 +455,7 @@ class CefWebView(Widget):
             on_favicon_url_change=self._dispatch_favicon_url_change,
             on_console_message=self._dispatch_console_message,
             on_before_popup=self._dispatch_before_popup,
-            on_before_download=(
-                self._dispatch_before_download
-                if self._cb_before_download
-                or type(self).on_before_download != CefWebView.on_before_download
-                else None
-            ),
+            on_before_download=self._dispatch_before_download,
             on_download_updated=self._dispatch_download_updated,
             on_context_menu=self._dispatch_context_menu,
             on_js_alert=self._dispatch_js_alert,
@@ -266,204 +465,105 @@ class CefWebView(Widget):
             on_fullscreen_mode_change=self._dispatch_fullscreen_mode_change,
         )
 
-        Clock.schedule_once(lambda dt: self.browser.set_zoom_level(initial_zoom), 1.5)
+        Clock.schedule_once(
+            lambda dt: self.browser.set_zoom_level(self._current_zoom), 1.5
+        )
         Clock.schedule_interval(self.update_cef, 0)
         Clock.schedule_once(lambda dt: self.browser.load_url(self.start_url))
         self.update_rect()
 
         Window.bind(on_touch_down=self.on_ceftouch_down)
         Window.bind(mouse_pos=self.on_cefmouse_move)
+        Window.bind(on_touch_move=self.on_ceftouch_move)
         Window.bind(on_touch_up=self.on_ceftouch_up)
         Window.bind(on_textinput=self._on_text_input)
 
     def _dispatch_load_start(self, status, url):
-        if self._cb_load_start:
-            self._cb_load_start(status, url)
-        else:
+        if self.on_load_start:
             self.on_load_start(status, url)
 
     def _dispatch_load_end(self, status, url):
-        if self._cb_load_end:
-            self._cb_load_end(status, url)
-        else:
+        if (
+            getattr(self, "_yt_adskip", False)
+            and self.browser
+            and "youtube.com/watch" in url
+        ):
+            self.browser.execute_js(_YT_ADSKIP_JS)
+
+        if self.on_load_end:
             self.on_load_end(status, url)
 
     def _dispatch_load_error(self, code, text, url):
-        if self._cb_load_error:
-            self._cb_load_error(code, text, url)
-        else:
+        if self.on_load_error:
             self.on_load_error(code, text, url)
 
     def _dispatch_address_change(self, url):
-        if self._cb_address_change:
-            self._cb_address_change(url)
-        else:
+        if self.on_address_change:
             self.on_address_change(url)
 
     def _dispatch_title_change(self, title):
-        if self._cb_title_change:
-            self._cb_title_change(title)
-        else:
+        if self.on_title_change:
             self.on_title_change(title)
 
     def _dispatch_loading_state_change(self, loading, can_back, can_fwd):
-        if self._cb_loading_state_change:
-            self._cb_loading_state_change(loading, can_back, can_fwd)
-        else:
+        if self.on_loading_state_change:
             self.on_loading_state_change(loading, can_back, can_fwd)
 
     def _dispatch_favicon_url_change(self, url):
-        if self._cb_favicon_url_change:
-            self._cb_favicon_url_change(url)
-        else:
+        if self.on_favicon_url_change:
             self.on_favicon_url_change(url)
 
     def _dispatch_console_message(self, level, message, source, line):
-        if self._cb_console_message:
-            return bool(self._cb_console_message(level, message, source, line))
-        return self.on_console_message(level, message, source, line)
+        if self.on_console_message:
+            return bool(self.on_console_message(level, message, source, line))
+        return False
 
     def _dispatch_before_popup(self, url, frame, disposition, user_gesture):
-        if self._cb_before_popup:
-            self._cb_before_popup(url, frame, disposition, user_gesture)
-        else:
+        if self.on_before_popup:
             self.on_before_popup(url, frame, disposition, user_gesture)
 
     def _dispatch_before_download(self, name, url, mime):
-        if self._cb_before_download:
-            return self._cb_before_download(name, url, mime)
-        return self.on_before_download(name, url, mime)
+        if self.on_before_download:
+            return self.on_before_download(name, url, mime)
+        return ""
 
     def _dispatch_download_updated(self, path, total, received, complete, canceled):
-        if self._cb_download_updated:
-            self._cb_download_updated(path, total, received, complete, canceled)
-        else:
+        if self.on_download_updated:
             self.on_download_updated(path, total, received, complete, canceled)
 
     def _dispatch_context_menu(
         self, x, y, link_url, selection_text, source_url, media_type
     ):
-        if self._cb_context_menu:
+        if self.on_context_menu:
             return bool(
-                self._cb_context_menu(
+                self.on_context_menu(
                     x, y, link_url, selection_text, source_url, media_type
                 )
             )
-        return self.on_context_menu(
-            x, y, link_url, selection_text, source_url, media_type
-        )
+        return False
 
     def _dispatch_js_alert(self, msg):
-        if self._cb_js_alert:
-            return bool(self._cb_js_alert(msg))
-        return self.on_js_alert(msg)
+        if self.on_js_alert:
+            return bool(self.on_js_alert(msg))
+        return False
 
     def _dispatch_js_confirm(self, msg):
-        if self._cb_js_confirm:
-            return bool(self._cb_js_confirm(msg))
-        return self.on_js_confirm(msg)
+        if self.on_js_confirm:
+            return bool(self.on_js_confirm(msg))
+        return False
 
     def _dispatch_js_prompt(self, msg, default_value):
-        if self._cb_js_prompt:
-            return bool(self._cb_js_prompt(msg, default_value))
-        return self.on_js_prompt(msg, default_value)
+        if self.on_js_prompt:
+            return bool(self.on_js_prompt(msg, default_value))
+        return False
 
     def _dispatch_find_result(self, identifier, count, final_update):
-        if self._cb_find_result:
-            self._cb_find_result(identifier, count, final_update)
-        else:
+        if self.on_find_result:
             self.on_find_result(identifier, count, final_update)
 
     def _dispatch_fullscreen_mode_change(self, fullscreen):
-        if self._cb_fullscreen_mode_change:
-            self._cb_fullscreen_mode_change(fullscreen)
-        else:
+        if self.on_fullscreen_mode_change:
             self.on_fullscreen_mode_change(fullscreen)
-
-    # Overridable browser event methods
-    def on_load_start(self, http_status_code, url):
-        """Fired when the main frame starts loading."""
-
-    def on_load_end(self, http_status_code, url):
-        """Fired when the main frame finishes loading."""
-
-    def on_load_error(self, error_code, error_text, failed_url):
-        """Fired when the main frame fails to load."""
-
-    def on_address_change(self, url):
-        """Fired when the browser navigates to a new URL."""
-
-    def on_title_change(self, title):
-        """Fired when the page title changes."""
-
-    def on_loading_state_change(self, is_loading, can_go_back, can_go_forward):
-        """Fired when the browser loading state changes."""
-
-    def on_favicon_url_change(self, favicon_url):
-        """Fired when the page's favicon URL changes."""
-
-    def on_console_message(self, level, message, source, line):
-        """
-        Fired for console.log / console.error / etc.
-        Return True to suppress CEF's own console output.
-        level: 0=debug, 1=info, 2=warning, 3=error
-        """
-        return False
-
-    def on_before_popup(self, url, target_frame_name, disposition, user_gesture):
-        """
-        Fired when a page tries to open a new tab/window.
-        The native popup is always suppressed; load the URL yourself
-        (e.g. self.browser.load_url(url)) or open a new CefWebView.
-        """
-
-    def on_before_download(self, suggested_name, url, mime_type):
-        """
-        Fired before a download starts.
-        Return an absolute path string to accept the download at that path.
-        Return "" to cancel.
-        If this callback is NOT set or overridden, the native CEF save dialog will show.
-        """
-        return ""
-
-    def on_download_updated(
-        self, path, total_bytes, received_bytes, is_complete, is_canceled
-    ):
-        """Fired during download progress and on completion/cancellation."""
-
-    def on_context_menu(self, x, y, link_url, selection_text, source_url, media_type):
-        """
-        Fired before the right-click context menu is shown.
-        Return True to suppress the native menu.
-        """
-        return False
-
-    def on_js_alert(self, message):
-        """
-        Fired for JavaScript alert().
-        Return True to suppress CEF's native dialog.
-        """
-        return False
-
-    def on_js_confirm(self, message):
-        """
-        Fired for JavaScript confirm().
-        Return True to suppress CEF's native dialog.
-        """
-        return False
-
-    def on_js_prompt(self, message, default_value):
-        """
-        Fired for JavaScript prompt().
-        Return True to suppress CEF's native dialog.
-        """
-        return False
-
-    def on_find_result(self, identifier, count, is_final_update):
-        """Fired with find-in-page results from self.find()."""
-
-    def on_fullscreen_mode_change(self, fullscreen):
-        """Fired when the page requests fullscreen on/off."""
 
     def _focus_cef(self):
         """Grabs the keyboard and sets CEF focus to True."""
@@ -529,6 +629,21 @@ class CefWebView(Widget):
 
     def _on_keyboard_down(self, keyboard, keycode, text, modifiers):
         key = keycode[0]
+
+        if "ctrl" in modifiers or "meta" in modifiers:
+            if key in (61, 43, 270):
+                self._current_zoom += 0.2
+                self.browser.set_zoom_level(self._current_zoom)
+                return True
+            elif key in (45, 269):
+                self._current_zoom -= 0.2
+                self.browser.set_zoom_level(self._current_zoom)
+                return True
+            elif key in (48, 256):
+                self._current_zoom = 0.0
+                self.browser.set_zoom_level(self._current_zoom)
+                return True
+
         vk = self._kivy_key_to_vk(key)
         mods = self._kivy_mods_to_cef(modifiers)
         self._current_modifiers = mods
@@ -555,16 +670,29 @@ class CefWebView(Widget):
         if "scroll" in touch.button:
             self._dispatch_wheel(touch.x, touch.y, touch.button)
             return True
+        self._active_touches[touch.uid] = touch
         button_map = {"left": 0, "middle": 1, "right": 2}
         button = button_map.get(touch.button, 0)
-        self._dispatch_mouse(touch.x, touch.y, 1, False, button)
+        click_count = 2 if touch.is_double_tap else 1
+        touch.ud["cef_click_count"] = click_count
+        self._dispatch_mouse(touch.x, touch.y, 1, False, button, click_count)
         touch.grab(self)
         return True
 
     def _dispatch_wheel(self, x, y, button):
         cef_x = int(x - self.x)
         cef_y = int(self.height - (y - self.y))
-        step = 120
+
+        mods = Window.modifiers
+        if "ctrl" in mods or "meta" in mods:
+            if button == "scrollup":
+                self._current_zoom += 0.1
+            elif button == "scrolldown":
+                self._current_zoom -= 0.1
+            self.browser.set_zoom_level(self._current_zoom)
+            return
+
+        step = self.scroll_step
         dx, dy = 0, 0
         if button == "scrollup":
             dy = -step
@@ -583,21 +711,78 @@ class CefWebView(Widget):
             self._dispatch_mouse(pos[0], pos[1], 0, False, 0)
             return True
 
+    def on_ceftouch_move(self, instance, touch):
+        if not self.active:
+            return False
+        if touch.uid not in self._active_touches:
+            return False
+
+        if len(self._active_touches) >= 2:
+            touches = list(self._active_touches.values())
+            t1, t2 = touches[0], touches[1]
+            import math
+
+            curr_dist = math.hypot(t1.x - t2.x, t1.y - t2.y)
+            if touch.uid == t1.uid:
+                prev_dist = math.hypot(touch.px - t2.x, touch.py - t2.y)
+            elif touch.uid == t2.uid:
+                prev_dist = math.hypot(t1.x - touch.px, t1.y - touch.py)
+            else:
+                prev_dist = curr_dist
+
+            dist_delta = curr_dist - prev_dist
+            move_dist = math.hypot(touch.dx, touch.dy)
+
+            if abs(dist_delta) > move_dist * 0.5:
+                # Mostly zooming
+                self._current_zoom += dist_delta * 0.005
+                self.browser.set_zoom_level(self._current_zoom)
+            else:
+                # Two-finger swipe scrolling
+                cef_x = int(touch.x - self.x)
+                cef_y = int(self.height - (touch.y - self.y))
+                dx = int(touch.dx * self.scroll_step)
+                dy = int(-touch.dy * self.scroll_step)
+                self.browser.send_mouse_wheel(cef_x, cef_y, dx, dy)
+            return True
+        else:
+            # Single-finger touch drag (behaves like mouse move)
+            self._dispatch_mouse(touch.x, touch.y, 0, False, 0)
+            return True
+
     def on_ceftouch_up(self, instance, touch):
+        self._active_touches.pop(touch.uid, None)
         if not self.active:
             return False
         if self.collide_point(*touch.pos):
             self.browser.set_focus(True)
             button_map = {"left": 0, "middle": 1, "right": 2}
             button = button_map.get(touch.button, 0)
-            self._dispatch_mouse(touch.x, touch.y, 1, True, button)
+            click_count = touch.ud.get("cef_click_count", 1)
+            self._dispatch_mouse(touch.x, touch.y, 1, True, button, click_count)
             touch.ungrab(self)
             return True
 
-    def _dispatch_mouse(self, x, y, event_type, is_up, button_type):
+    def _dispatch_mouse(self, x, y, event_type, is_up, button_type, click_count=1):
         cef_x = int(x - self.x)
         cef_y = int(self.height - (y - self.y))
-        self.browser.send_mouse_event(cef_x, cef_y, event_type, is_up, button_type)
+        # Keep _mouse_mods in sync so every mouse-move event carries the
+        # correct "button held" flags — without this CEF never sees a drag.
+        if event_type != 0:  # click event (not move)
+            flag = _BUTTON_TO_MB_FLAG.get(button_type, 0)
+            if is_up:
+                self._mouse_mods &= ~flag
+            else:
+                self._mouse_mods |= flag
+        self.browser.send_mouse_event(
+            cef_x,
+            cef_y,
+            event_type,
+            is_up,
+            button_type,
+            click_count,
+            self._mouse_mods,
+        )
 
     def update_rect(self, *args):
         if not hasattr(self, "browser") or not hasattr(self, "rect"):
@@ -609,7 +794,7 @@ class CefWebView(Widget):
             self.rect.pos = self.pos
             self.rect.size = self.size
         if hasattr(self, "translate"):
-            self.translate.y = 2 * self.y + self.size[1]
+            self.translate.y = self.size[1]
 
     def _on_gpu_paint(self, handle_id, width, height):
         if handle_id != self.current_handle:
@@ -618,12 +803,50 @@ class CefWebView(Widget):
             self.mapped = True
         self.canvas.ask_update()
 
-    def _on_cpu_paint(self, buffer_view, width, height):
+    def _on_cpu_paint(self, buffer_view, width, height, dirty_rects):
         try:
+            tex_resized = False
             if self.tex.width != width or self.tex.height != height:
                 self.tex = Texture.create(size=(width, height), colorfmt="bgra")
                 self.rect.texture = self.tex
-            self.tex.blit_buffer(buffer_view, colorfmt="bgra", bufferfmt="ubyte")
+                tex_resized = True
+
+            if tex_resized or not dirty_rects:
+                # Full upload on resize or if CEF gives no dirty rects.
+                self.tex.blit_buffer(buffer_view, colorfmt="bgra", bufferfmt="ubyte")
+            else:
+                stride = width * 4
+                view = memoryview(buffer_view)
+
+                for rx, ry, rw, rh in dirty_rects:
+                    # Clamp to actual texture dimensions.
+                    rx = max(0, min(rx, width))
+                    ry = max(0, min(ry, height))
+                    rw = max(0, min(rw, width - rx))
+                    rh = max(0, min(rh, height - ry))
+                    if rw == 0 or rh == 0:
+                        continue
+
+                    row_len = rw * 4
+                    parts = []
+                    for y in range(ry, ry + rh):
+                        start = y * stride + rx * 4
+                        parts.append(view[start : start + row_len])
+
+                    region = b"".join(parts)
+
+                    # The Scale(1,-1,1) canvas transform flips the whole texture
+                    # visually. A full blit_buffer maps CEF row N -> texture y=N
+                    # with no extra flip, so dirty rects must use the same mapping:
+                    # pos y = ry directly.
+                    self.tex.blit_buffer(
+                        region,
+                        size=(rw, rh),
+                        pos=(rx, ry),
+                        colorfmt="bgra",
+                        bufferfmt="ubyte",
+                    )
+
             self.canvas.ask_update()
         except Exception as e:
             print(f"Paint error: {e}")
@@ -683,6 +906,57 @@ class CefWebView(Widget):
     def close(self):
         """Close this browser instance."""
         self.browser.close()
+
+    def enable_adblock(self, blocker=None, load_async=True, yt_adskip=True):
+        """
+        Enable ad / tracker blocking for this browser instance.
+
+        Parameters
+        ----------
+        blocker : AdBlocker | None
+            Pass an already-loaded :class:`AdBlocker` instance to share one
+            engine across multiple tabs, or leave ``None`` to create and load
+            a private instance automatically.
+        load_async : bool
+            When *True* (default) the filter list download/compile step runs
+            on a daemon thread so the UI is not blocked.  The blocker will
+            silently allow all requests until loading completes (~2 s on a
+            fast connection if no cache exists).
+        yt_adskip : bool
+            When *True* (default) injects a JavaScript snippet into every
+            YouTube page that auto-skips and removes ads that are served from
+            the same domain as regular content and therefore cannot be caught
+            by network-level filtering alone.
+        """
+        if blocker is None:
+            blocker = AdBlocker()
+
+        self._adblocker = blocker
+        self._yt_adskip = yt_adskip
+
+        def _hook(url, resource_type):
+            # The source URL isn't available from this callback, but the
+            # blocker still works well using document URL from the browser.
+            source = self.browser.get_url() if self.browser else ""
+            return self._adblocker.should_block(url, source, resource_type)
+
+        self.browser.on_before_resource_load = _hook
+
+        if blocker._engine is None:
+            # Engine not yet loaded — kick it off.
+            if load_async:
+                import threading
+
+                t = threading.Thread(target=blocker.load, daemon=True)
+                t.start()
+            else:
+                blocker.load()
+
+    def disable_adblock(self):
+        """Remove the ad-blocking filter from this browser instance."""
+        self.browser.on_before_resource_load = None
+        self._adblocker = None
+        self._yt_adskip = False
 
     def on_kv_post(self, *args):
         pass

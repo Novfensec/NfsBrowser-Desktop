@@ -22,7 +22,12 @@ class CefService:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
         import platform
-        worker_name = "NfsBrowser_worker.exe" if platform.system() == "Windows" else "NfsBrowser_worker"
+
+        worker_name = (
+            "NfsBrowser_worker.exe"
+            if platform.system() == "Windows"
+            else "NfsBrowser_worker"
+        )
         worker_exe = os.path.join(ROOT, worker_name)
         res_dir = pybindcef.RESOURCES_DIR
 

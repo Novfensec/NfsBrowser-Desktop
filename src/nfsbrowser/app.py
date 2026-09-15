@@ -3,6 +3,7 @@ import os
 import platform
 import sys
 from ctypes import wintypes
+
 from .root import ROOT
 
 os.environ["KIVY_NO_FILELOG"] = "1"
@@ -17,8 +18,6 @@ import pybindcef
 from kivy.config import Config
 from libs.config_handler import config_handler
 
-Config.set("graphics", "width", "800")
-Config.set("graphics", "height", "600")
 Config.set("graphics", "maxfps", "60")
 Config.set("input", "mouse", "mouse,multitouch_on_demand")
 Config.set("graphics", "fullscreen", "0")
@@ -135,6 +134,7 @@ class NfsBrowser(CarbonApp):
         self.apply_styles()
 
         cef_service.initialize()
+        Window.bind(on_key_down=self._on_keyboard_down)
 
         # Add the first default tab but don't attach webview yet
         self.browser_model.new_tab(load_immediately=False)
@@ -356,6 +356,56 @@ class NfsBrowser(CarbonApp):
             user32.ShowWindow(hwnd, 6)
         else:
             Window.minimize()
+
+    def toggle_fullscreen(self, webview=None, force=None):
+        is_fs = getattr(self, "_is_fullscreen", False)
+        target = not is_fs if force is None else force
+        if target == is_fs:
+            return
+        self._is_fullscreen = target
+
+        if platform.system() == "Windows":
+            hwnd = user32.GetActiveWindow()
+            GWL_STYLE = -16
+            WS_OVERLAPPEDWINDOW = 0x00CF0000
+            
+            if target:
+                self._was_zoomed = user32.IsZoomed(hwnd)
+                self._pre_fs_style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+                user32.SetWindowLongW(hwnd, GWL_STYLE, self._pre_fs_style & ~WS_OVERLAPPEDWINDOW)
+                user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
+            else:
+                restore_style = getattr(self, "_pre_fs_style", 0)
+                if restore_style:
+                    user32.SetWindowLongW(hwnd, GWL_STYLE, restore_style)
+                if getattr(self, "_was_zoomed", False):
+                    user32.ShowWindow(hwnd, 3)
+                else:
+                    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                
+            user32.SetWindowPos(hwnd, 0, 0,0,0,0, 0x27)
+        else:
+            Window.fullscreen = 'auto' if target else False
+
+        if not webview and hasattr(self, "browser_model") and self.browser_model.active_tab:
+            webview = self.browser_model.active_tab.webview
+            
+        if webview:
+            if target:
+                self._webview_saved_parent = webview.parent
+                if self._webview_saved_parent:
+                    self._webview_saved_parent.remove_widget(webview)
+                Window.add_widget(webview)
+            else:
+                if webview.parent == Window:
+                    Window.remove_widget(webview)
+                if getattr(self, "_webview_saved_parent", None):
+                    self._webview_saved_parent.add_widget(webview)
+
+    def _on_keyboard_down(self, window, key, scancode, codepoint, modifier):
+        if key == 292:  # F11
+            self.toggle_fullscreen()
+            return True
 
     def toggle_maximize(self, *args):
         Window.fullscreen = False

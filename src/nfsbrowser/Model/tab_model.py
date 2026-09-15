@@ -1,7 +1,10 @@
-from kivy.properties import StringProperty, BooleanProperty, ObjectProperty
-from services.cef_service import cef_service
-from libs.cef_webview import CefWebView
+from kivy.app import App
+from kivy.properties import BooleanProperty, ObjectProperty, StringProperty
+from libs.cef_webview import AdBlocker, CefWebView
 from Model.base_model import BaseScreenModel
+from services.cef_service import cef_service
+
+SHARED_ADBLOCKER = AdBlocker()
 
 
 class TabModel(BaseScreenModel):
@@ -16,6 +19,7 @@ class TabModel(BaseScreenModel):
     def __init__(self, **kwargs):
         super(TabModel, self).__init__(**kwargs)
         self.webview = None
+        self.app = App.get_running_app()
 
         self.bind(
             title=self.notify_all_observers,
@@ -29,14 +33,20 @@ class TabModel(BaseScreenModel):
     def _ensure_webview(self, start_url=None):
         if self.webview is None:
             self.webview = CefWebView(
-                start_url=start_url if start_url else "https://google.com"
+                start_url=start_url if start_url else "https://google.com",
+                initial_zoom=1.5,
             )
             self.webview.size_hint = (1, 1)
 
-            self.webview._cb_title_change = self._on_title
-            self.webview._cb_address_change = self._on_address
-            self.webview._cb_loading_state_change = self._on_loading_state
-            self.webview._cb_load_error = self._on_load_error
+            # Enable adblock using the shared engine. (Loads asynchronously in the background)
+            self.webview.enable_adblock(blocker=SHARED_ADBLOCKER)
+
+            self.webview.on_title_change = self._on_title
+            self.webview.on_address_change = self._on_address
+            self.webview.on_loading_state_change = self._on_loading_state
+            self.webview.on_load_error = self._on_load_error
+            self.webview.on_before_popup = self._on_before_popup
+            self.webview.on_fullscreen_mode_change = self._on_fullscreen
 
     def notify_all_observers(self, *args):
         from kivy.clock import Clock
@@ -70,6 +80,15 @@ class TabModel(BaseScreenModel):
 
     def _on_address(self, url):
         self.url = url
+
+    def _on_before_popup(self, url, frame, disposition, user_gesture):
+        if self.app and hasattr(self.app, "browser_model"):
+            self.app.browser_model.new_tab(url=url)
+        return True  # Cancel native popup
+
+    def _on_fullscreen(self, fullscreen):
+        if self.app and hasattr(self.app, "toggle_fullscreen"):
+            self.app.toggle_fullscreen(webview=self.webview, force=fullscreen)
 
     def _on_loading_state(self, is_loading, can_back, can_fwd):
         self.is_loading = is_loading
